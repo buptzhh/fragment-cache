@@ -1,0 +1,2 @@
+model_checkpoint_path: "cache_model_bi.ckpt"
+all_model_checkpoint_paths: "cache_model_bi.ckpt"
