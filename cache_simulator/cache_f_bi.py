@@ -23,8 +23,8 @@ from collections import OrderedDict, defaultdict
 
 # only for bilibili dataset
 MAXSIZE = 2048000000
-T = 30
-test_time = 3600
+T = 60
+test_time = 3660
 X = 100000  # values param
 EP_STEP = 1000
 
@@ -214,22 +214,22 @@ class Simulator(gym.Env):
             if self.cur_content.content_id not in self.content_requested_state:  # 记录历史访问信息
                 self.content_requested_state[self.cur_content.content_id] = np.zeros((1, T))[0]
             self.content_requested_state[self.cur_content.content_id][self.cur_time_pos] += 1
-            if self.cur_content.time >= T - 1:  # 第九秒开始初始缓存内容
-                if self.cur_content.size <= self.re_size:  # 初始化
-                    req_history = sum(self.content_requested_state[self.cur_content.content_id])
-                    lru.get(self.cur_content.content_id)
-                    lfu.get(self.cur_content.content_id, req_history)
-                    if self.cur_content.content_id not in self.cached_content:
-                        lru.put(self.cur_content.content_id, self.cur_content.size)
-                        lfu.put(self.cur_content.content_id, self.cur_content.size, req_history)
-                        self.cached_content[self.cur_content.content_id] = copy.deepcopy(self.cur_content)
-                        self.cached_content[self.cur_content.content_id].should_cached_size = self.cur_content.size - (self.cur_content.size % block_size)
-                        self.re_size -= self.cached_content[self.cur_content.content_id].should_cached_size
-                else:
-                    self.cache_init_isFinish = True
-                    print(len(self.cached_content))
-                    break
-        for i in range(self.cur_content.time + 1):  # 提前读了第十秒的内容
+            # if self.cur_content.time >= T - 1:  # 第九秒开始初始缓存内容
+            if self.cur_content.size <= self.re_size:  # 初始化
+                req_history = sum(self.content_requested_state[self.cur_content.content_id])
+                lru.get(self.cur_content.content_id)
+                lfu.get(self.cur_content.content_id, req_history)
+                if self.cur_content.content_id not in self.cached_content:
+                    lru.put(self.cur_content.content_id, self.cur_content.size)
+                    lfu.put(self.cur_content.content_id, self.cur_content.size, req_history)
+                    self.cached_content[self.cur_content.content_id] = copy.deepcopy(self.cur_content)
+                    self.cached_content[self.cur_content.content_id].should_cached_size = self.cur_content.size - (self.cur_content.size % block_size)
+                    self.re_size -= self.cached_content[self.cur_content.content_id].should_cached_size
+            else:
+                self.cache_init_isFinish = True
+                print(len(self.cached_content))
+                break
+        for i in range(self.cur_content.time + 1):  # 提前读了下一秒的内容
             read_future()
 
         self._update_value()
@@ -258,13 +258,10 @@ class Simulator(gym.Env):
             self._cache_item(self.cur_content.content_id)
 
         while True:  # 只有当未命中/命中部分且剩余空间小于请求片段 and evict
-            self._next_request()
-            if self.cur_time >= test_time:
-                self.done = True
+            if self._next_request():
                 return [], self.done
             if self.cur_content.content_id in self.cached_content:  # 缓存还有空间和缓存命中的情况
-                if self.cached_content[
-                    self.cur_content.content_id].should_cached_size >= self.cur_content.should_cached_size:
+                if self.cached_content[self.cur_content.content_id].should_cached_size >= self.cur_content.should_cached_size:
                     continue  # hit
                 else:  # hit a part
                     if self.re_size >= self.cur_content.should_cached_size - self.cached_content[
@@ -276,9 +273,6 @@ class Simulator(gym.Env):
                     self._cache_item(self.cur_content.content_id)
                     continue
             self.state, self.evict_action = self._get_evict_action()
-            if self.cur_time >= test_time:
-                self.done = True
-                return [], self.done
             if len(self.evict_action) != 0:
                 break
         return self.state, self.done
@@ -343,11 +337,14 @@ class Simulator(gym.Env):
     def _next_request(self):
         self.cur_point += 1
         self.cur_content = read_a_line()
+
         req_id = self.cur_content.content_id
         _content_size = self.cur_content.size
         req_size = self.cur_content.request_size
         req_time = self.cur_content.time
-
+        if req_time >= test_time:
+            self.done = True
+            return True
         # self.re_size_sum += self.re_size / MAXSIZE
 
         if req_time != self.cur_time:
@@ -381,6 +378,7 @@ class Simulator(gym.Env):
         lru.run(req_id, _content_size, req_time, req_size)
         req_history = sum(self.content_requested_state[req_id])
         lfu.run(req_id, _content_size, req_time, req_size, req_history)
+        return False
 
     def _get_min_val(self):
         if len(self.low_value_pool) < 21:
@@ -537,7 +535,7 @@ if __name__ == "__main__":
             action = GLOBAL_AC.choose_action(state)
             state, done = simulator.step(action)
     print(simulator.action_time)
-    ori_time = 10
+    ori_time = 60
     filename = 'bi_f_result.txt'
     with open(filename, 'a') as file_object:
         total_time = sum([simulator.total_time[i] for i in range(ori_time, test_time)])
