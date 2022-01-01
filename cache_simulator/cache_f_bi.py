@@ -51,16 +51,9 @@ GLOBAL_EP = 0
 N_S = 5
 N_A = 5
 gtotal_step = 0
-delay_req = {}
 lru = LRUCache(MAXSIZE, int(test_time))
 lfu = LFUCache(MAXSIZE, int(test_time))
 
-
-infilepath = '../dataset/122.228.93.41.csv'
-infile = open(infilepath, encoding="utf-8")
-infile_for_future = open(infilepath, encoding="utf-8")
-infile.readline()
-infile_for_future.readline()
 
 def get_block_num(size):
     return int(math.ceil(size / block_size))
@@ -122,53 +115,6 @@ class ACNet(object):
         return action
 
 
-def read_a_line():
-    line = infile.readline()
-    info = line.split(',')
-    ltime = int(float(info[0]))
-    content_id = int(info[1])
-    content_size = int(info[2])
-    if ltime >= test_time:
-        print('read finish')
-    if 102400 < content_size < 4096000:
-        cur_content = content_with_fragment(content_id, content_size, ltime)
-        return cur_content
-    else:
-        return read_a_line()
-
-
-def read_future():
-    delay_req.clear()
-    line = infile_for_future.readline()
-    info = line.split(',')
-    start_time = int(float(info[0]))
-    _cur_time = start_time
-    while start_time == _cur_time:
-        line = infile_for_future.readline()
-        info = line.split(',')
-        _cur_time = int(float(info[0]))
-        content_id = int(info[1])
-        if content_id in delay_req:
-            delay_req[content_id] += 1
-        else:
-            delay_req[content_id] = 1
-    # _cur_time_pos = _cur_time % time_slot
-    # while start_time == _cur_time:
-    #     line = infile_for_future.readline()
-    #     info = line.split(',')
-    #     _cur_time = int(float(info[0]))
-    #     content_id = int(info[1])
-    #     if content_id in delay_req:
-    #         delay_req[content_id][_cur_time_pos] += 1
-    #     else:
-    #         delay_req[content_id] = np.zeros((1, time_slot))[0]
-    #         delay_req[content_id][_cur_time_pos] += 1
-    # _cur_time_pos = _cur_time % time_slot
-    # for item in delay_req:
-    #     delay_req[item][_cur_time_pos] = 0
-    #     if sum(delay_req[item]) == 0:
-    #         delay_req.pop(item)
-
 
 class Simulator(gym.Env):
     # action_bound = [0, 1, 2, 3, 4]  # 0为不准入，1-5为准入且剔除价值量最少的4种剔除方式
@@ -178,6 +124,13 @@ class Simulator(gym.Env):
         self.cache_init_isFinish = False
         self.observation_space = 5
         self.action_space = 5
+
+        self.infilepath = '../dataset/122.228.93.41.csv'
+        self.infile = open(self.infilepath)
+        self.infile_for_future = open(self.infilepath)
+        self.infile.readline()
+        self.infile_for_future.readline()
+
         self.cache_size = MAXSIZE
         self.re_size = MAXSIZE
         self.cur_point = 0
@@ -189,6 +142,7 @@ class Simulator(gym.Env):
         self.content_fragment_value = {}
         self.cached_content = {}
         self.content_requested_state = {}
+        self.delay_req = {}
 
         self.cur_content = None
         self.cur_time_pos = 0
@@ -204,12 +158,12 @@ class Simulator(gym.Env):
 
         self.state = None
         self.evict_action = None
-
+        self.init_cache()
         pass
 
     def init_cache(self):
         while not self.cache_init_isFinish:
-            self.cur_content = read_a_line()
+            self.cur_content = self.read_a_line()
             self.cur_time_pos = self.cur_content.time % T
             if self.cur_content.content_id not in self.content_requested_state:  # 记录历史访问信息
                 self.content_requested_state[self.cur_content.content_id] = np.zeros((1, T))[0]
@@ -229,10 +183,11 @@ class Simulator(gym.Env):
                 self.cache_init_isFinish = True
                 print(len(self.cached_content))
                 break
-        for i in range(self.cur_content.time + 1):  # 提前读了下一秒的内容
-            read_future()
+        for i in range(self.cur_content.time + 2):  # 提前读了下一秒的内容
+            self.read_future()
 
         self._update_value()
+        self._next_request()
         self.step(0)
         print(self.state)
         print(self.evict_action)
@@ -245,9 +200,6 @@ class Simulator(gym.Env):
             print(self.name, " action:", self.action_time, "cached num", len(self.cached_content), " re_size:",
                   self.re_size, " cur time:",
                   self.cur_time, " cur point： ", self.cur_point, time.asctime(time.localtime(time.time())))
-        if self.cur_time >= test_time:
-            self.done = True
-            return [], self.done
         if action == 0:  # 不准入
             pass
         else:
@@ -264,8 +216,7 @@ class Simulator(gym.Env):
                 if self.cached_content[self.cur_content.content_id].should_cached_size >= self.cur_content.should_cached_size:
                     continue  # hit
                 else:  # hit a part
-                    if self.re_size >= self.cur_content.should_cached_size - self.cached_content[
-                        self.cur_content.content_id].should_cached_size:
+                    if self.re_size >= self.cur_content.should_cached_size - self.cached_content[self.cur_content.content_id].should_cached_size:
                         self._cache_item(self.cur_content.content_id)
                         continue
             else:  # miss
@@ -312,17 +263,18 @@ class Simulator(gym.Env):
             fragment_block += 1
             if fragment_block < 5:
                 continue
-            if fragment_block >= 100 or freq * fragment_block_value >= fragment_freq:
+            if freq * fragment_block_value >= fragment_freq or fragment_block >= 100:
                 break
         if self.cached_content[_content_id].should_cached_size <= fragment_block * block_size:
             self.cached_content[_content_id].last_fragment_size = self.cached_content[_content_id].should_cached_size
-        self.cached_content[_content_id].last_fragment_size = fragment_block * block_size
+        else:
+            self.cached_content[_content_id].last_fragment_size = fragment_block * block_size
         pass
 
     def update_a_value(self, _content_id):
         freq = sum(self.content_requested_state[_content_id])
-        if _content_id in delay_req:
-            freq += delay_req[_content_id]
+        if _content_id in self.delay_req:
+            freq += self.delay_req[_content_id]
         frag_por = sum(zipf[int(math.ceil((self.cached_content[_content_id].should_cached_size - self.cached_content[
             _content_id].last_fragment_size) / block_size)):
                             int(math.ceil(self.cached_content[_content_id].should_cached_size / block_size))]) / \
@@ -336,12 +288,15 @@ class Simulator(gym.Env):
 
     def _next_request(self):
         self.cur_point += 1
-        self.cur_content = read_a_line()
+        self.cur_content = self.read_a_line()
 
         req_id = self.cur_content.content_id
         _content_size = self.cur_content.size
         req_size = self.cur_content.request_size
         req_time = self.cur_content.time
+        if req_time - self.cur_time > 1:
+            print('dataset error')
+            exit()
         if req_time >= test_time:
             self.done = True
             return True
@@ -350,7 +305,7 @@ class Simulator(gym.Env):
         if req_time != self.cur_time:
             self.cur_time = req_time
             self.cur_time_pos = self.cur_time % T
-            read_future()
+            self.read_future()
             self._update_value()
         if req_id not in self.content_requested_state:
             self.content_requested_state[req_id] = np.zeros((1, T))[0]
@@ -379,6 +334,52 @@ class Simulator(gym.Env):
         req_history = sum(self.content_requested_state[req_id])
         lfu.run(req_id, _content_size, req_time, req_size, req_history)
         return False
+
+    def read_a_line(self):
+        line = self.infile.readline()
+        info = line.split(',')
+        ltime = int(float(info[0]))
+        content_id = int(info[1])
+        content_size = int(info[2])
+        if ltime >= test_time:
+            print('read finish')
+        if 102400 < content_size < 4096000:
+            cur_content = content_with_fragment(content_id, content_size, ltime)
+            return cur_content
+        else:
+            return self.read_a_line()
+
+    def read_future(self):
+        self.delay_req.clear()
+        line = self.infile_for_future.readline()
+        info = line.split(',')
+        start_time = int(float(info[0]))
+        _cur_time = start_time
+        while start_time == _cur_time:
+            line = self.infile_for_future.readline()
+            info = line.split(',')
+            _cur_time = int(float(info[0]))
+            content_id = int(info[1])
+            if content_id in self.delay_req:
+                self.delay_req[content_id] += 1
+            else:
+                self.delay_req[content_id] = 1
+        # _cur_time_pos = _cur_time % time_slot
+        # while start_time == _cur_time:
+        #     line = self.infile_for_future.readline()
+        #     info = line.split(',')
+        #     _cur_time = int(float(info[0]))
+        #     content_id = int(info[1])
+        #     if content_id in delay_req:
+        #         delay_req[content_id][_cur_time_pos] += 1
+        #     else:
+        #         delay_req[content_id] = np.zeros((1, time_slot))[0]
+        #         delay_req[content_id][_cur_time_pos] += 1
+        # _cur_time_pos = _cur_time % time_slot
+        # for item in delay_req:
+        #     delay_req[item][_cur_time_pos] = 0
+        #     if sum(delay_req[item]) == 0:
+        #         delay_req.pop(item)
 
     def _get_min_val(self):
         if len(self.low_value_pool) < 21:
@@ -423,8 +424,8 @@ class Simulator(gym.Env):
         min_val = self._get_min_val()
         req_id = self.cur_content.content_id
         req_freq = sum(self.content_requested_state[req_id])
-        if req_id in delay_req:
-            req_freq += delay_req[req_id]
+        if req_id in self.delay_req:
+            req_freq += self.delay_req[req_id]
         if req_id not in self.cached_content:
             req_size = self.cur_content.should_cached_size
             req_value = X * req_freq * sum(zipf[:int(math.ceil(req_size / block_size))]) / (
@@ -460,13 +461,13 @@ class Simulator(gym.Env):
         if len(evict_candidators) < 4:
             if 0 not in list(min_val.values()):
                 return np.pad(np.array([0] + [req_value - v for k, v in evict_candidators]),
-                              (0, 4 - len(evict_candidators))), \
+                              (0, 4 - len(evict_candidators)), 'constant'), \
                        [candidators[k] for k, v in evict_candidators]  # state, action
             for _content in contents:
                 if min_val[_content] == 0:
                     self._pop_item(_content)
             return self._get_evict_action()
-        return np.pad(np.array([0] + [req_value - v for k, v in evict_candidators]), (0, 4 - len(evict_candidators))), \
+        return np.pad(np.array([0] + [req_value - v for k, v in evict_candidators]), (0, 4 - len(evict_candidators)), 'constant'), \
                [candidators[k] for k, v in evict_candidators]  # state, action
 
 
@@ -518,7 +519,6 @@ def draw(z1, z2, z3, y1, y2, y3, t1, t2, t3):
 
 if __name__ == "__main__":
     simulator = Simulator("worker")
-    simulator.init_cache()
     state = simulator.state
 
     SESS = tf.Session()
