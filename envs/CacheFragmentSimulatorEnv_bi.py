@@ -11,9 +11,10 @@ from collections import OrderedDict, defaultdict
 
 # only for bilibili dataset
 MAXSIZE = 2048000000
-T = 10
-test_time = 20
-X = 100000
+T = 60
+Fu_window = 10
+test_time = 3600
+X = 1000000
 EP_STEP = 1000
 
 block_size = 10240  # content block num = int(content_size / block_size)+1
@@ -40,7 +41,7 @@ class CacheSimulator(gym.Env):
         self.infile_for_future = open(self.infilepath)
         self.infile.readline()
         self.infile_for_future.readline()
-        self.future_total_size = np.zeros((1, T))[0]
+        self.future_total_size = np.zeros((1, Fu_window))[0]
         self.cache_init_isFinish = False
         self.observation_space = 5
         self.action_space = 5
@@ -75,7 +76,8 @@ class CacheSimulator(gym.Env):
         content_id = int(info[1])
         content_size = int(info[2])
         if ltime >= test_time:
-            print('read finish')
+            print('dataset is too short')
+
         if 102400 < content_size < 4096000:
             cur_content = content_with_fragment(content_id, content_size, ltime)
             return cur_content
@@ -87,7 +89,7 @@ class CacheSimulator(gym.Env):
         line = self.infile_for_future.readline()
         info = line.split(',')
         start_time = int(float(info[0]))
-        time_pos = start_time % T
+        time_pos = start_time % Fu_window
         _cur_time = start_time
         self.future_total_size[time_pos] = 0
         delete_list = []
@@ -106,7 +108,7 @@ class CacheSimulator(gym.Env):
             if content_id in self.delay_req:
                 self.delay_req[content_id][time_pos] += 1
             else:
-                self.delay_req[content_id] = np.zeros((1, T))[0]
+                self.delay_req[content_id] = np.zeros((1, Fu_window))[0]
                 self.delay_req[content_id][time_pos] = 1
 
     def init_cache(self):
@@ -127,7 +129,7 @@ class CacheSimulator(gym.Env):
                 self.cache_init_isFinish = True
                 print(len(self.cached_content))
                 break
-        for i in range(self.cur_content.time + 1 + T):  # 提前读了第十秒的内容
+        for i in range(self.cur_content.time + 1 + Fu_window):  # 提前读了第十秒的内容
             self.read_future()
 
         self._update_value()
@@ -221,7 +223,7 @@ class CacheSimulator(gym.Env):
     def update_a_value(self, _content_id):
         freq = sum(self.content_requested_state[_content_id])
         if _content_id in self.delay_req:
-            freq += self.delay_req[_content_id][(self.cur_time_pos + 1) % T]
+            freq += self.delay_req[_content_id][(self.cur_time + 1) % Fu_window]
         frag_por = sum(zipf[int(math.ceil((self.cached_content[_content_id].should_cached_size - self.cached_content[
             _content_id].last_fragment_size) / block_size)):
                             int(math.ceil(self.cached_content[_content_id].should_cached_size / block_size))]) / \
@@ -304,7 +306,7 @@ class CacheSimulator(gym.Env):
         req_id = self.cur_content.content_id
         req_freq = sum(self.content_requested_state[req_id])
         if req_id in self.delay_req:
-            req_freq += self.delay_req[req_id][(self.cur_time_pos + 1) % T]
+            req_freq += self.delay_req[req_id][(self.cur_time + 1) % Fu_window]
         if req_id not in self.cached_content:
             req_size = self.cur_content.should_cached_size
             req_value = X * req_freq * sum(zipf[:int(math.ceil(req_size / block_size))]) / (

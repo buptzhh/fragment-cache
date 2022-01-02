@@ -12,6 +12,7 @@ from collections import OrderedDict, defaultdict
 # only for bilibili dataset
 MAXSIZE = 2048000000
 T = 10
+Fu_window = 10
 test_time = 60
 X = 100000
 EP_STEP = 1000
@@ -68,7 +69,7 @@ class CacheSimulator(gym.Env):
         content_id = int(info[1])
         content_size = int(info[2])
         if ltime >= test_time:
-            print('read finish')
+            print('dataset is too short')
         if 102400 < content_size < 4096000:
             cur_content = content_with_fragment(content_id, content_size, ltime)
             return cur_content
@@ -80,7 +81,7 @@ class CacheSimulator(gym.Env):
         line = self.infile_for_future.readline()
         info = line.split(',')
         start_time = int(float(info[0]))
-        time_pos = start_time % T
+        time_pos = start_time % Fu_window
         _cur_time = start_time
         self.future_total_size[time_pos] = 0
         delete_list = []
@@ -99,7 +100,7 @@ class CacheSimulator(gym.Env):
             if content_id in self.delay_req:
                 self.delay_req[content_id][time_pos] += 1
             else:
-                self.delay_req[content_id] = np.zeros((1, T))[0]
+                self.delay_req[content_id] = np.zeros((1, Fu_window))[0]
                 self.delay_req[content_id][time_pos] = 1
 
     def init_cache(self):
@@ -118,7 +119,7 @@ class CacheSimulator(gym.Env):
                 self.cache_init_isFinish = True
                 print(len(self.cached_content))
                 break
-        for i in range(self.cur_content.time + 1 + T):  # 提前读了T秒的内容
+        for i in range(self.cur_content.time + 1 + Fu_window):  # 提前读了T秒的内容
             self.read_future()
 
         self._update_value()
@@ -169,7 +170,7 @@ class CacheSimulator(gym.Env):
         self.re_size -= _content_size
         req_freq = sum(self.content_requested_state[_content_id])
         if _content_id in self.delay_req:
-            req_freq += self.delay_req[_content_id][(self.cur_time_pos + 1) % T]
+            req_freq += self.delay_req[_content_id][(self.cur_time + 1) % Fu_window]
         self.content_fragment_value[_content_id] = X * req_freq / _content_size
         if _content_id in self.low_value_pool:
             self.low_value_pool.pop(_content_id)
@@ -193,7 +194,7 @@ class CacheSimulator(gym.Env):
         if req_id in self.cached_content:  # 更新已经缓存内容的价值
             req_freq = sum(self.content_requested_state[req_id])
             if req_id in self.delay_req:
-                req_freq += self.delay_req[req_id][(self.cur_time_pos + 1) % T]
+                req_freq += self.delay_req[req_id][(self.cur_time + 1) % Fu_window]
             self.content_fragment_value[req_id] = X * req_freq / _content_size
 
     def _get_min_val(self):
@@ -226,8 +227,10 @@ class CacheSimulator(gym.Env):
                 if sum(self.content_requested_state[item]) == 0:
                     delete_list.append(item)
             else:
-                self.content_fragment_value[item] = X * sum(
-                    self.content_requested_state[item]) / self.cached_content[item]
+                req_freq = sum(self.content_requested_state[item])
+                if item in self.delay_req:
+                    req_freq += self.delay_req[item][(self.cur_time_pos + 1) % Fu_window]
+                self.content_fragment_value[item] = X * req_freq / self.cached_content[item]
         for item in delete_list:
             self.content_requested_state.pop(item)
         self.update_value_pool()
@@ -249,7 +252,7 @@ class CacheSimulator(gym.Env):
         req_id = self.cur_content.content_id
         req_freq = sum(self.content_requested_state[req_id])
         if req_id in self.delay_req:
-            req_freq += self.delay_req[req_id][(self.cur_time_pos + 1) % T]
+            req_freq += self.delay_req[req_id][(self.cur_time_pos + 1) % Fu_window]
         req_value = X * req_freq / req_size
         contents = [key for key in min_val.keys()]
         evict_candidators = {}
