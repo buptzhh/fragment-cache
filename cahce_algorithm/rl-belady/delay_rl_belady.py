@@ -36,7 +36,7 @@ class RLBeladyCache:
         self.freqMap = collections.defaultdict(create_linked_list)
         self.cache = {}
         # self.re_size_sum = 0
-        self.outfile = open("D:\\Desktop\\a3c\\cahce\\cahce_algorithm\\rl_belady\\" + str(self.capacity) + ".txt",
+        self.outfile = open("D:\\Desktop\\a3c\\cahce\\cahce_algorithm\\rl_belady\\delay" + str(self.capacity) + ".txt",
                             "a+", newline="", encoding='UTF-8')
         self.writer = csv.writer(self.outfile, delimiter=' ')
 
@@ -65,9 +65,20 @@ class RLBeladyCache:
 
     def get(self, content_id, nr, lr):
         if content_id in self.cache:
-            self.update_freq(self.cache[content_id], max(nr, lr), nr, lr)
+            # self.update_freq(self.cache[content_id], max(nr, lr), nr, lr)
             return 1
         return -1
+
+    def isHit(self, time, content_id, content_size, nr, lr, delay_set):
+        if content_id in self.cache or content_id in delay_set:
+            if content_id in self.cache:
+                self.update_freq(self.cache[content_id], max(nr, lr), nr, lr)
+            is_hit = 1
+        else:
+            is_hit = 0
+        outinfo = [time, content_id, content_size, is_hit]
+        self.writer.writerow(outinfo)
+        return is_hit
 
     def put(self, content_id, content_size, nr, lr):
         if self.capacity != 0:
@@ -91,8 +102,6 @@ class RLBeladyCache:
         else:
             if is_adm == 1:
                 self.put(content_id, content_size, nr, lr)
-        outinfo = [time, content_id, content_size, is_hit, is_adm]
-        self.writer.writerow(outinfo)
         return is_hit
 
     def update_nr(self):

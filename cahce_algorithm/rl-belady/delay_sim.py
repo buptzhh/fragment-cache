@@ -3,13 +3,13 @@ from gym import spaces
 import numpy as np
 import copy
 import time
-from rl_belady import RLBeladyCache
+from delay_rl_belady import RLBeladyCache
 from fnn import NeuralNetwork
 
 T = 60
 test_time = 3600
 max_time = 3600
-K = 5000
+K = 10000
 L = 5000
 RLBelady = None
 
@@ -37,6 +37,9 @@ class Simulator(gym.Env):
         self.cur_time_pos = 0
         self.re_size_sum = 0
 
+        self.delay_req = []
+        self.delay_set = set()
+
         self.model_list = []
         nn = NeuralNetwork()
         # Add Layers (Input layer is created by default)
@@ -54,7 +57,6 @@ class Simulator(gym.Env):
         self.is_train = True
         self.total_hits = 0
         self.adm_times = 0
-        self.initfin = False
         pass
 
     def read_a_line(self):
@@ -84,7 +86,6 @@ class Simulator(gym.Env):
             print(self.cur_point)
             print(self.adm_times)
             print(self.total_hits)
-            # print(self.model_list[-1].weights)
         req_id, _content_size, req_time, nr, delat, lr, real_future_nr = self.read_a_line()
         if req_time >= max_time:
             self.done = True
@@ -92,27 +93,30 @@ class Simulator(gym.Env):
         # self.re_size_sum += self.re_size / MAXSIZE
 
         if req_time != self.cur_time:
+            self.delay_run()
             RLBelady.update_nr()
             self.cur_time = req_time
 
         input = delat + [nr]
-        # print(input)
-        is_adm = 0
         if self.step < 5:
             if nr < 1000:
                 is_adm = 1
                 self.adm_times += 1
             else:
                 is_adm = 0
+            RLBelady.isHit(req_time, req_id, _content_size, nr, lr, self.delay_set)
+            is_hit = RLBelady.run(req_id, _content_size, req_time, nr, lr, is_adm)
         else:
             is_adm = self.model_list[-1].predict(np.asarray(input).reshape(1, 5))
-            # print(is_adm[0][0])
             if is_adm[0][0] > 0.5:
                 is_adm = 1
                 self.adm_times += 1
             else:
                 is_adm = 0
-        is_hit = RLBelady.run(req_id, _content_size, req_time, nr, lr, is_adm)
+            is_hit = RLBelady.isHit(req_time, req_id, _content_size, nr, lr, self.delay_set)
+            self.delay_req.append([req_id, _content_size, req_time, nr, lr, is_adm])
+            self.delay_set.add(req_id)
+
         self.hit_times[1] += is_hit
         self.total_hits += is_hit
         if len(self.s_window) < K + L:
@@ -135,7 +139,7 @@ class Simulator(gym.Env):
             self.s_window.clear()
             self.s_time.clear()
             if self.hit_times[1] >= self.hit_times[0]:
-                self.e_time +=1
+                self.e_time += 1
                 if len(self.model_list) > 5:
                     self.model_list.pop(0)
             if self.hit_times[1] < self.hit_times[0]:# or sum(self.s_label[K:]) < int(L*0.1):
@@ -144,6 +148,7 @@ class Simulator(gym.Env):
             self.hit_times[1] = 0
             self.step += 1
             self.is_train = True
+
         return False
 
     def label_update(self):
@@ -156,13 +161,21 @@ class Simulator(gym.Env):
                     l += 1
             L.append(l)
         L_sorted = sorted(L)
-        L1 = L_sorted[int(len(L_sorted)*0.1)]
-        L2 = L_sorted[int(len(L_sorted)*0.9)]
+        L1 = L_sorted[int(len(L_sorted) * 0.1)]
+        L2 = L_sorted[int(len(L_sorted) * 0.9)]
         for i in range(K - 1000):
             if L[i] <= L1:
                 self.s_label[i] = 1
             if L[i] >= L2:
                 self.s_label[i] = 0
+        pass
+
+    def delay_run(self):
+        for item in self.delay_req:
+            RLBelady.run(item[0], item[1], item[2], item[3], item[4], item[5])
+            pass
+        self.delay_set.clear()
+        self.delay_req.clear()
         pass
 
 
@@ -178,6 +191,6 @@ if __name__ == "__main__":
         done = False
         while not done:
             done = simulator.next_request()
-        print("sim_etime"+str(simulator.e_time) + "hit:"+str(simulator.total_hits) +" adm:" + str(simulator.adm_times))
+        print("sim_etime" + str(simulator.e_time) + "hit:" + str(simulator.total_hits))
         end_time = time.time()
-        print("run_time"+str(end_time - train_time))
+        print("run_time" + str(end_time - train_time))

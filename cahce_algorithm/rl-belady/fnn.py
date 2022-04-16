@@ -27,7 +27,7 @@ class NeuralNetwork():
     def predict(self, data):
         # Pass data through pretrained network
         for layer in range(2, self.num_layers + 1):
-            data = np.dot(data, self.weights[layer - 1][:-1, :])# + self.weights[layer - 1][:-1, :]
+            data = np.dot(data, self.weights[layer - 1][:-1, :]) + self.weights[layer - 1][-1, :]
             data = self.__sigmoid(data)
         return data
 
